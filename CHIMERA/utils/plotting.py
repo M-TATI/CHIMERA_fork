@@ -72,6 +72,8 @@ def plot_2Dcoring(like,
     dgal = like.gal.select_event_region(*z_lims, pixels, nside)
     ragal, decgal, zgal = dgal["ra"], dgal["dec"], dgal["z"] 
 
+    #return ragal, decgal, zgal
+
     # Individual galaxies
     alpha = misc.remapMinMax(-zgal, a=.2, b=.7)
     ax[0].scatter(ragal, decgal, marker='x', c='darkred', s=30, label="Potential hosts", alpha=alpha)
