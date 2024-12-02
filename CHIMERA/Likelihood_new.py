@@ -6,6 +6,20 @@
 #   All rights reserved. Use of this source code is governed by the license that can be found in the LICENSE file.
 #
 import pickle
+import time                                #MINHA MODIFICAÇÃO
+from tqdm import tqdm                      #MINHA MODIFICAÇÃO
+import logging                             #MINHA MODIFICAÇÃO
+
+# Configuração básica do logging (coloque isso no início do seu código)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(message)s')
+
+# Em seguida, substitua os prints por logging.debug
+logging.debug(f"Initialization time: {init_time:.4f} seconds")
+logging.debug(f"GW Initialization and grid computation time: {gw_init_time:.4f} seconds")
+logging.debug(f"Galaxy catalog loading and precomputation time: {gal_init_time:.4f} seconds")
+logging.debug(f"Completeness data loading time: {compl_loading_time:.4f} seconds")
+logging.debug(f"Total compute function time: {total_time:.4f} seconds")
+
 
 from abc import ABC, abstractmethod
 
@@ -210,9 +224,9 @@ class MockLike(Likelihood):
     def get_fR(self, lambda_cosmo, normalized=False):
         norm = float(self.model_cosmo.V(20, lambda_cosmo)) if normalized else 1.
         return  float(self.model_cosmo.V(1.3, lambda_cosmo))/norm
-    
 
-    def compute(self, lambda_cosmo, lambda_mass, lambda_rate, inspect=False):
+    
+     def compute(self, lambda_cosmo, lambda_mass, lambda_rate, inspect=False):
         """Compute the likelihood for the given hyperparameters.
 
         Args:
@@ -242,9 +256,6 @@ class MockLike(Likelihood):
             # norm1     = np.trapz(p_cat, z_grid, axis=0)
             # norm2     = np.trapz(p_cat_vol, z_grid, axis=0)
             # p_gal     = (compl * (norm2/norm1)*p_cat/p_cat_vol + (1.-compl))*np.array(self.model_cosmo.dV_dz(z_grid, lambda_cosmo))[:,np.newaxis]
-
-
-            
             
 
             if self.data_GAL_dir is None:
@@ -274,9 +285,6 @@ class MockLike(Likelihood):
                 self.like_pix_all.append(onp.array(like_pix))
 
         return onp.array(like_events)
-
-
-
 
 
 class LikeLVK(Likelihood):
@@ -316,7 +324,7 @@ class LikeLVK(Likelihood):
                  neff_data_min = 5,
                  ):
 
-
+        start_time = time.perf_counter()    #MINHA MODIFICAÇÃO
         super().__init__()
 
         # Initialize all the parameters
@@ -348,8 +356,13 @@ class LikeLVK(Likelihood):
         self.neff_data_min    = neff_data_min
 
         self.attrs_store      = self.attrs_basesave + self.attrs_mock + self.attrs_compute
-
+        
+        init_time = time.perf_counter() - start_time                     #MINHA MODIFICAÇÃO
+        print(f"Initialization time: {init_time:.4f} seconds", flush=True)           #MINHA MODIFICAÇÃO
+        
         # Initialize GW class, then precompute pixels and redshift grids
+        start_time = time.perf_counter()               #MINHA MODIFICAÇÃO
+        
         self.gw         = GW(data=data_GW, data_names=self.data_GW_names, data_smooth=self.data_GW_smooth,
                              model_mass=self.model_mass, model_rate=self.model_rate, model_spin="", model_cosmo=self.model_cosmo, 
                              npix_event=self.npix_event, nside_list=self.nside_list, sky_conf=self.sky_conf, 
@@ -360,13 +373,21 @@ class LikeLVK(Likelihood):
         self.npix_event = self.gw.npix_event
         self.z_grids    = self.gw.compute_z_grids(self.z_int_H0_prior, self.z_int_sigma, self.z_int_res)
 
+        gw_init_time = time.perf_counter() - start_time                                             #MINHA MODIFICAÇÃO
+        print(f"GW Initialization and grid computation time: {gw_init_time:.4f} seconds", flush=True)           #MINHA MODIFICAÇÃO
+
         # Load galaxy catalog, precompute p_gal, P_compl, and p_bkg
         if self.data_GAL_dir is not None:
+            start_time = time.perf_counter()            #MINHA MODIFICAÇÃO
             self.gal = GLADEPlus(data_GAL_dir, nside = self.gw.nside, Lcut=Lcut, band=band)
             self.p_cat_all, self.ngal_pix = self.gal.precompute(self.nside, self.pix_conf, self.z_grids, self.data_GW_names, self.data_GAL_weights)
+
+            gal_init_time = time.perf_counter() - start_time
+            print(f"Galaxy catalog loading and precomputation time: {gal_init_time:.4f} seconds", flush=True)
             
             # if completeness str load
             if isinstance(self.completeness, str):
+                start_time = time.perf_counter()
                 dir_compl = self.completeness
                 self.completeness = MaskCompleteness(N_z_bins=30, N_masks=4, compl_goal=0.01) # CompletenessMICEv2(z_range = [0., 0.12])
                 self.completeness.load(dir_compl)
@@ -379,6 +400,10 @@ class LikeLVK(Likelihood):
                 print("Using completeness from "+dir_compl)
                 print("Using average completeness from "+dir_avg_compl)
 
+                compl_loading_time = time.perf_counter() - start_time                         #MINHA MODIFICAÇÃO
+                print(f"Completeness data loading time: {compl_loading_time:.4f} seconds", flush=True)    #MINHA MODIFICAÇÃO
+
+                start_time = time.perf_counter()          #MINHA MODIFICAÇÃO
                 P_compl_avg = lambda z : self.avg_completeness.P_compl(z, np.array([0]), 32)
                 # fR_avg = lambda ll : self.model.cosmo.V(0.12, ll) 
                 fR_avg = lambda ll : self.avg_completeness.get_fR(ll, z_det_range=[0,.12])
@@ -388,11 +413,18 @@ class LikeLVK(Likelihood):
 
                 self.p_gal_bkg = _p_bkg_fcn
 
+                compl_computation_time = time.perf_counter() - start_time                           #MINHA MODIFICAÇÃO
+                print(f"Completeness computation time: {compl_computation_time:.4f} seconds", flush=True)       #MINHA MODIFICAÇÃO
+
             else:
                 # print("APPROX COMPL")
+                start_time = time.perf_counter()
                 with open(data_GAL_int_dir, "rb") as f:
                     p_cat_int = pickle.load(f)
+                gal_int_loading_time = time.perf_counter() - start_time                                            #MINHA MODIFICAÇÃO
+                print(f"Galaxy catalog integration data loading time: {gal_int_loading_time:.4f} seconds", flush=True)         #MINHA MODIFICAÇÃO
 
+                start_time = time.perf_counter()                #MINHA MODIFICAÇÃO
                 def P_compl(z, z_range=[0,0.12]):
                     """Return 1 if z is in z_range, 0 otherwise."""
                     return np.where(np.logical_and(z>z_range[0], z<z_range[1]), 1., 0.)
@@ -407,6 +439,9 @@ class LikeLVK(Likelihood):
 
                 self.P_compl   = P_compl
                 self.p_gal_bkg = _p_bkg_fcn
+
+                p_bkg_setup_time = time.perf_counter() - start_time                                               #MINHA MODIFICAÇÃO
+                print(f"Background probability function setup time: {p_bkg_setup_time:.4f} seconds", flush=True)              #MINHA MODIFICAÇÃO
 
             # elif self.completeness is None:
             #     print("No completeness given, assuming completeness = 1")
@@ -431,7 +466,11 @@ class LikeLVK(Likelihood):
             # self.p_gal_bkg = _p_bkg_fcn
 
         else:
-            self.p_cat_all = [np.ones((self.z_int_res,self.npix_event[e])) for e in range(self.nevents)]        
+            start_time = time.perf_counter()         #MINHA MODIFICAÇÃO
+            self.p_cat_all = [np.ones((self.z_int_res,self.npix_event[e])) for e in range(self.nevents)]  
+
+            p_cat_all_time = time.perf_counter() - start_time                           #MINHA MODIFICAÇÃO
+            print(f"Default p_cat_all setup time: {p_cat_all_time:.4f} seconds", flush=True)        #MINHA MODIFICAÇÃO
 
     def get_fR(self, lambda_cosmo, norm=False):
         res = float(self.model_cosmo.V(0.12, lambda_cosmo))
@@ -448,26 +487,47 @@ class LikeLVK(Likelihood):
         Returns:
             np.ndarray: likelihood for each event
         """
+        total_start_time = time.perf_counter()       #MINHA MODIFICAÇÃO
         like_events = np.empty(self.nevents)
 
         # Compute overall rate normalization given lambda_rate (returns 1. if self.z_det_range is None)
+        start_time = time.perf_counter()             #MINHA MODIFICAÇÃO
         p_z_norm = self._get_p_z_norm(lambda_cosmo, lambda_rate)
+
+        p_z_norm_time = time.perf_counter() - start_time                          #MINHA MODIFICAÇÃO
+        print(f"p_z_norm computation time: {p_z_norm_time:.4f} seconds", flush=True)          #MINHA MODIFICAÇÃO
 
         fR_ev = self.get_fR(lambda_cosmo)
 
         # Compute like for each event
         for e in range(self.nevents):
+            event_start_time = time.perf_counter()         #MINHA MODIFICAÇÃO
             z_grid    = self.z_grids[e]
             p_cat     = self.p_cat_all[e]
 
             compl     = self.P_compl(z_grid)
+            
+            start_time = time.perf_counter()            #MINHA MODIFICAÇÃO 
             p_gal     = fR_ev * p_cat + ( (1.-compl)*np.array(self.model_cosmo.dV_dz(z_grid, lambda_cosmo)))[:, np.newaxis]
+            p_gal_time = time.perf_counter() - start_time                                       #MINHA MODIFICAÇÃO 
+            print(f"Event {e} - p_gal computation time: {p_gal_time:.4f} seconds", flush=True)              #MINHA MODIFICAÇÃO 
+            
+            start_time = time.perf_counter()  #MINHA MODIFICAÇÃO        
             p_rate    = self.gw.model_rate(z_grid, lambda_rate)/(1.+z_grid)
             p_z       = (p_rate/p_z_norm)[:,np.newaxis] * p_gal
+            p_rate_time = time.perf_counter() - start_time           #MINHA MODIFICAÇÃO 
+            print(f"Event {e} - p_rate and p_z computation time: {p_rate_time:.4f} seconds", flush=True)     #MINHA MODIFICAÇÃO 
+
+            start_time = time.perf_counter()     #MINHA MODIFICAÇÃO 
             p_gw      = self.gw.compute_event(e, z_grid, lambda_cosmo, lambda_mass)
+            p_gw_time = time.perf_counter() - start_time                                    #MINHA MODIFICAÇÃO
+            print(f"Event {e} - p_gw computation time: {p_gw_time:.4f} seconds", flush=True)            #MINHA MODIFICAÇÃO
+
+            start_time = time.perf_counter()                          #MINHA MODIFICAÇÃO
             like_pix = np.trapz(p_gw*p_z, z_grid, axis=0)
-
-
+            like_pix_time = time.perf_counter() - start_time                                          #MINHA MODIFICAÇÃO
+            print(f"Event {e} - like_pix integration time: {like_pix_time:.4f} seconds", flush=True)              #MINHA MODIFICAÇÃO
+            
             like_events[e] = np.nansum(like_pix, axis=0) / hp.pixelfunc.nside2npix(self.nside[e])
 
             if inspect:
@@ -478,6 +538,12 @@ class LikeLVK(Likelihood):
                 self.p_z_all.append(onp.array(p_z))
                 self.like_pix_all.append(onp.array(like_pix))
 
+            event_time = time.perf_counter() - event_start_time            #MINHA MODIFICAÇÃO
+            print(f"Total time for event {e}: {event_time:.4f} seconds", flush=True)   #MINHA MODIFICAÇÃO
+
+        total_time = time.perf_counter() - total_start_time                       #MINHA MODIFICAÇÃO
+        print(f"Total compute function time: {total_time:.4f} seconds", flush=True)           #MINHA MODIFICAÇÃO
+        
         return onp.array(like_events)
 
 
